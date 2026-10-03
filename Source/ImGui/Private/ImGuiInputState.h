@@ -25,6 +25,11 @@ public:
 	// Array for navigation input states.
 	using FNavInputArray = ImGuiInterops::ImGuiTypes::FNavInputArray;
 
+	struct FKeyInputEvent { ImGuiKey Key; bool bIsDown; };
+	struct FMouseButtonInputEvent { int Button; bool bIsDown; };
+	const TArray<FKeyInputEvent>& GetKeyEvents() const { return KeyEvents; }
+	const TArray<FMouseButtonInputEvent>& GetMouseButtonEvents() const { return MouseButtonEvents; }
+
 	// Pair of indices defining range in mouse buttons array.
 	using FMouseButtonsIndexRange = Utilities::TArrayIndexRange<FMouseButtonsArray, uint32>;
 
@@ -118,21 +123,22 @@ public:
 
 	// Set Control down state.
 	// @param bIsDown - True, if Control is down
-	void SetControlDown(bool bIsDown) { bIsControlDown = bIsDown; }
+	void SetControlDown(bool bIsDown) { SetModifierKey(bIsControlDown, bIsDown, ImGuiMod_Ctrl); }
 
 	// Get Shift down state.
 	bool IsShiftDown() const { return bIsShiftDown; }
 
 	// Set Shift down state.
 	// @param bIsDown - True, if Shift is down
-	void SetShiftDown(bool bIsDown) { bIsShiftDown = bIsDown; }
+	void SetShiftDown(bool bIsDown) { SetModifierKey(bIsShiftDown, bIsDown, ImGuiMod_Shift); }
 
 	// Get Alt down state.
 	bool IsAltDown() const { return bIsAltDown; }
 
 	// Set Alt down state.
 	// @param bIsDown - True, if Alt is down
-	void SetAltDown(bool bIsDown) { bIsAltDown = bIsDown; }
+	void SetAltDown(bool bIsDown) { SetModifierKey(bIsAltDown, bIsDown, ImGuiMod_Alt); }
+	void SetSuperDown(bool bIsDown) { SetModifierKey(bIsSuperDown, bIsDown, ImGuiMod_Super); }
 
 	// Get reference to the array with navigation input states.
 	const FNavInputArray& GetNavigationInputs() const { return NavigationInputs; }
@@ -205,6 +211,7 @@ private:
 
 	void SetKeyDown(uint32 KeyIndex, bool bIsDown);
 	void SetMouseDown(uint32 MouseIndex, bool IsDown);
+	void SetModifierKey(bool& State, bool bIsDown, ImGuiKey Key);
 
 	void ClearCharacters();
 	void ClearKeys();
@@ -217,15 +224,17 @@ private:
 	FVector2D TouchPosition = FVector2D::ZeroVector;
 	float MouseWheelDelta = 0.f;
 
-	FMouseButtonsArray MouseButtonsDown;
+	FMouseButtonsArray MouseButtonsDown = {};
 	FMouseButtonsIndexRange MouseButtonsUpdateRange;
 
 	FCharactersBuffer InputCharacters;
 
-	FKeysArray KeysDown;
+	FKeysArray KeysDown = {};
 	FKeysIndexRange KeysUpdateRange;
 
-	FNavInputArray NavigationInputs;
+	FNavInputArray NavigationInputs = {};
+	TArray<FKeyInputEvent> KeyEvents;
+	TArray<FMouseButtonInputEvent> MouseButtonEvents;
 
 	bool bHasMousePointer = false;
 	bool bTouchDown = false;
@@ -234,6 +243,7 @@ private:
 	bool bIsControlDown = false;
 	bool bIsShiftDown = false;
 	bool bIsAltDown = false;
+	bool bIsSuperDown = false;
 
 	bool bKeyboardNavigationEnabled = false;
 	bool bGamepadNavigationEnabled = false;

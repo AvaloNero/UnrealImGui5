@@ -19,7 +19,7 @@ class FImGuiContextProxy
 {
 public:
 
-	FImGuiContextProxy(const FString& Name, int32 InContextIndex, ImFontAtlas* InFontAtlas, float InDPIScale);
+	FImGuiContextProxy(const FString& Name, int32 InContextIndex, ImFontAtlas* InFontAtlas, float InDPIScale, FTextureManager& InTextureManager);
 	~FImGuiContextProxy();
 
 	FImGuiContextProxy(const FImGuiContextProxy&) = delete;
@@ -95,6 +95,7 @@ private:
 	void BroadcastMultiContextDebug();
 
 	ImGuiContext* Context;
+	FTextureManager& TextureManager;
 
 	FVector2D DisplaySize = FVector2D::ZeroVector;
 	float DPIScale = 1.f;
@@ -114,7 +115,7 @@ private:
 	FString Name;
 	int32 ContextIndex = Utilities::INVALID_CONTEXT_INDEX;
 
-	uint32 LastFrameNumber = 0;
+	uint64 LastFrameNumber = MAX_uint64;
 
 	FSimpleMulticastDelegate DrawEvent;
 

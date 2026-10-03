@@ -24,6 +24,7 @@ void FImGuiInputState::SetKeyDown(uint32 KeyIndex, bool bIsDown)
 		if (KeysDown[KeyIndex] != bIsDown)
 		{
 			KeysDown[KeyIndex] = bIsDown;
+			KeyEvents.Add({ static_cast<ImGuiKey>(ImGuiKey_NamedKey_BEGIN + KeyIndex), bIsDown });
 			KeysUpdateRange.AddPosition(KeyIndex);
 		}
 	}
@@ -36,6 +37,7 @@ void FImGuiInputState::SetMouseDown(uint32 MouseIndex, bool bIsDown)
 		if (MouseButtonsDown[MouseIndex] != bIsDown)
 		{
 			MouseButtonsDown[MouseIndex] = bIsDown;
+			MouseButtonEvents.Add({ static_cast<int>(MouseIndex), bIsDown });
 			MouseButtonsUpdateRange.AddPosition(MouseIndex);
 		}
 	}
@@ -44,6 +46,8 @@ void FImGuiInputState::SetMouseDown(uint32 MouseIndex, bool bIsDown)
 void FImGuiInputState::ClearUpdateState()
 {
 	ClearCharacters();
+	KeyEvents.Reset();
+	MouseButtonEvents.Reset();
 
 	KeysUpdateRange.SetEmpty();
 	MouseButtonsUpdateRange.SetEmpty();
@@ -60,8 +64,10 @@ void FImGuiInputState::ClearCharacters()
 
 void FImGuiInputState::ClearKeys()
 {
-	using std::fill;
-	fill(KeysDown, &KeysDown[Utilities::GetArraySize(KeysDown)], false);
+	for (uint32 Index = 0; Index < Utilities::GetArraySize(KeysDown); ++Index)
+	{
+		SetKeyDown(Index, false);
+	}
 
 	// Mark the whole array as dirty because potentially each entry could be affected.
 	KeysUpdateRange.SetFull();
@@ -69,8 +75,10 @@ void FImGuiInputState::ClearKeys()
 
 void FImGuiInputState::ClearMouseButtons()
 {
-	using std::fill;
-	fill(MouseButtonsDown, &MouseButtonsDown[Utilities::GetArraySize(MouseButtonsDown)], false);
+	for (uint32 Index = 0; Index < Utilities::GetArraySize(MouseButtonsDown); ++Index)
+	{
+		SetMouseDown(Index, false);
+	}
 
 	// Mark the whole array as dirty because potentially each entry could be affected.
 	MouseButtonsUpdateRange.SetFull();
@@ -84,9 +92,19 @@ void FImGuiInputState::ClearMouseAnalogue()
 
 void FImGuiInputState::ClearModifierKeys()
 {
-	bIsControlDown = false;
-	bIsShiftDown = false;
-	bIsAltDown = false;
+	SetControlDown(false);
+	SetShiftDown(false);
+	SetAltDown(false);
+	SetSuperDown(false);
+}
+
+void FImGuiInputState::SetModifierKey(bool& State, bool bIsDown, ImGuiKey Key)
+{
+	if (State != bIsDown)
+	{
+		State = bIsDown;
+		KeyEvents.Add({ Key, bIsDown });
+	}
 }
 
 void FImGuiInputState::ClearNavigationInputs()

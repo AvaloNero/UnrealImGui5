@@ -22,10 +22,8 @@ namespace ImGuiInterops
 	namespace ImGuiTypes
 	{
 		using FMouseButtonsArray = decltype(ImGuiIO::MouseDown);
-		using FKeysArray = decltype(ImGuiIO::KeysDown);
-		using FNavInputArray = decltype(ImGuiIO::NavInputs);
-
-		using FKeyMap = decltype(ImGuiIO::KeyMap);
+		using FKeysArray = bool[ImGuiKey_NamedKey_COUNT];
+		using FNavInputArray = float[ImGuiKey_GamepadRStickDown - ImGuiKey_GamepadStart + 1];
 	}
 
 
@@ -33,8 +31,8 @@ namespace ImGuiInterops
 	// Input Mapping
 	//====================================================================================================
 
-	// Set in ImGui IO mapping to recognize indices generated from Unreal input events.
-	void SetUnrealKeyMap(ImGuiIO& IO);
+	// Map an Unreal key to a named ImGui key, independent of platform key codes.
+	ImGuiKey ToImGuiKey(const FKey& Key);
 
 	// Map FKey to index in keys buffer.
 	uint32 GetKeyIndex(const FKey& Key);
@@ -104,12 +102,13 @@ namespace ImGuiInterops
 	// Convert from ImGui Texture Id to Texture Index that we use for texture resources.
 	FORCEINLINE TextureIndex ToTextureIndex(ImTextureID Index)
 	{
-		return static_cast<TextureIndex>(reinterpret_cast<intptr_t>(Index));
+		return Index == ImTextureID_Invalid ? INDEX_NONE : static_cast<TextureIndex>(Index - 1);
 	}
 
 	// Convert from Texture Index to ImGui Texture Id that we pass to ImGui.
 	FORCEINLINE ImTextureID ToImTextureID(TextureIndex Index)
 	{
-		return reinterpret_cast<ImTextureID>(static_cast<intptr_t>(Index));
+		// Zero is reserved by Dear ImGui for an invalid texture.
+		return Index == INDEX_NONE ? ImTextureID_Invalid : static_cast<ImTextureID>(Index) + 1;
 	}
 }

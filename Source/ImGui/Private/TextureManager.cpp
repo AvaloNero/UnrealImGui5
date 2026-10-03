@@ -1,11 +1,92 @@
 // Distributed under the MIT License (MIT) (see accompanying LICENSE file)
 
 #include "TextureManager.h"
+#include "ImGuiInteroperability.h"
 
 #include <Engine/Texture2D.h>
 #include <Framework/Application/SlateApplication.h>
 
 #include <algorithm>
+
+namespace
+{
+	// The render thread owns this snapshot; ImGui may resize or free its pixels in the next frame.
+	uint8* CopyImGuiPixels(const ImTextureData& Data, int32 X, int32 Y, int32 Width, int32 Height)
+	{
+		uint8* Pixels = new uint8[static_cast<SIZE_T>(Width) * Height * 4];
+		for (int32 Row = 0; Row < Height; ++Row)
+		{
+			const uint8* Source = Data.Pixels + ((Y + Row) * Data.Width + X) * Data.BytesPerPixel;
+			uint8* Destination = Pixels + Row * Width * 4;
+			for (int32 Column = 0; Column < Width; ++Column)
+			{
+				// Unreal's transient textures use BGRA, while Dear ImGui provides RGBA or alpha.
+				Destination[0] = Data.Format == ImTextureFormat_RGBA32 ? Source[2] : 255;
+				Destination[1] = Data.Format == ImTextureFormat_RGBA32 ? Source[1] : 255;
+				Destination[2] = Data.Format == ImTextureFormat_RGBA32 ? Source[0] : 255;
+				Destination[3] = Data.Format == ImTextureFormat_RGBA32 ? Source[3] : Source[0];
+				Source += Data.BytesPerPixel;
+				Destination += 4;
+			}
+		}
+		return Pixels;
+	}
+}
+
+void FTextureManager::UpdateImGuiTextures(ImDrawData& DrawData)
+{
+	if (DrawData.Textures && FSlateApplication::IsInitialized())
+	{
+		for (ImTextureData* TextureData : *DrawData.Textures)
+		{
+			UpdateImGuiTexture(*TextureData);
+		}
+	}
+}
+
+void FTextureManager::UpdateImGuiTexture(ImTextureData& Data)
+{
+	if (Data.Status == ImTextureStatus_WantCreate)
+	{
+		const FName Name(*FString::Printf(TEXT("ImGui_Atlas_%p"), &Data));
+		uint8* Pixels = CopyImGuiPixels(Data, 0, 0, Data.Width, Data.Height);
+		const TextureIndex Index = CreateTexture(Name, Data.Width, Data.Height, 4, Pixels, [](uint8* Buffer) { delete[] Buffer; });
+		Data.SetTexID(ImGuiInterops::ToImTextureID(Index));
+		Data.BackendUserData = TextureResources[Index].GetTexture();
+		Data.SetStatus(ImTextureStatus_OK);
+	}
+	else if (Data.Status == ImTextureStatus_WantUpdates)
+	{
+		const TextureIndex Index = ImGuiInterops::ToTextureIndex(Data.GetTexID());
+		check(IsValidTexture(Index));
+		const ImTextureRect& Rect = Data.UpdateRect;
+		if (Rect.w > 0 && Rect.h > 0)
+		{
+			uint8* Pixels = CopyImGuiPixels(Data, Rect.x, Rect.y, Rect.w, Rect.h);
+			FUpdateTextureRegion2D* Region = new FUpdateTextureRegion2D(Rect.x, Rect.y, 0, 0, Rect.w, Rect.h);
+			TextureResources[Index].GetTexture()->UpdateTextureRegions(0, 1, Region, Rect.w * 4, 4, Pixels,
+				[](uint8* Buffer, const FUpdateTextureRegion2D* UpdateRegion) { delete[] Buffer; delete UpdateRegion; });
+		}
+		Data.SetStatus(ImTextureStatus_OK);
+	}
+	else if (Data.Status == ImTextureStatus_WantDestroy && Data.UnusedFrames > 2)
+	{
+		// Slate may still hold staged draw commands from another PIE context.
+		ReleaseImGuiTexture(Data);
+	}
+}
+
+void FTextureManager::ReleaseImGuiTexture(ImTextureData& Data)
+{
+	const TextureIndex Index = ImGuiInterops::ToTextureIndex(Data.GetTexID());
+	if (IsValidTexture(Index))
+	{
+		ReleaseTextureResources(Index);
+	}
+	Data.SetTexID(ImTextureID_Invalid);
+	Data.BackendUserData = nullptr;
+	Data.SetStatus(ImTextureStatus_Destroyed);
+}
 
 
 void FTextureManager::InitializeErrorTexture(const FColor& Color)

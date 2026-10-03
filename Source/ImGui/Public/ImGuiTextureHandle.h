@@ -43,6 +43,7 @@ public:
 
 	/** Implicit conversion to ImTextureID. */
 	operator ImTextureID() const { return GetTextureId(); }
+	operator ImTextureRef() const { return ImTextureRef(GetTextureId()); }
 
 private:
 

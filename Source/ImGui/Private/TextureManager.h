@@ -8,6 +8,8 @@
 
 
 class UTexture2D;
+struct ImTextureData;
+struct ImDrawData;
 
 // Index type to be used as a texture handle.
 using TextureIndex = int32;
@@ -90,6 +92,10 @@ public:
 	// @param Index - The index of a texture resources
 	void ReleaseTextureResources(TextureIndex Index);
 
+	// Honor Dear ImGui's dynamic font atlas requests before staging draw commands.
+	void UpdateImGuiTextures(ImDrawData& DrawData);
+	void ReleaseImGuiTexture(ImTextureData& TextureData);
+
 private:
 
 	// See CreateTexture for general description.
@@ -108,6 +114,7 @@ private:
 	// @param bAddToRoot - If true, we should add texture to root to prevent garbage collection (use for own textures)
 	// @returns The index of the entry that we created or reused
 	TextureIndex AddTextureEntry(const FName& Name, UTexture2D* Texture, bool bAddToRoot);
+	void UpdateImGuiTexture(ImTextureData& TextureData);
 
 	// Check whether index is in range allocated for TextureResources (it doesn't mean that resources are valid).
 	FORCEINLINE bool IsInRange(TextureIndex Index) const
@@ -139,6 +146,7 @@ private:
 
 		const FName& GetName() const { return Name; }
 		const FSlateResourceHandle& GetResourceHandle() const;
+		UTexture2D* GetTexture() const { return Texture.Get(); }
 
 	private:
 

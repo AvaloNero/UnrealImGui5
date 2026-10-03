@@ -46,7 +46,6 @@ private:
 	FImGuiModuleManager& operator=(FImGuiModuleManager&&) = delete;
 
 	void LoadTextures();
-	void BuildFontAtlasTexture();
 
 	bool IsTickRegistered() { return TickDelegateHandle.IsValid(); }
 	void RegisterTick();
@@ -79,11 +78,11 @@ private:
 	// Widget that we add to all created contexts to draw ImGui demo. 
 	FImGuiDemo ImGuiDemo;
 
-	// Manager for ImGui contexts.
-	FImGuiContextManager ContextManager;
-
 	// Manager for textures resources.
 	FTextureManager TextureManager;
+
+	// Destroy contexts before the textures they reference.
+	FImGuiContextManager ContextManager;
 
 	// Slate widgets that we created.
 	TArray<TWeakPtr<SImGuiLayout>> Widgets;

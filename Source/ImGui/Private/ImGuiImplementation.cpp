@@ -2,16 +2,15 @@
 
 #include "ImGuiImplementation.h"
 
+#define IMGUI_DEFINE_MATH_OPERATORS
+
 #include <CoreMinimal.h>
+
+// Clipboard integration is provided through Unreal's platform API in ImGuiContextProxy.
+#define IMGUI_DISABLE_WIN32_FUNCTIONS
 
 // For convenience and easy access to the ImGui source code, we build it as part of this module.
 // We don't need to define IMGUI_API manually because it is already done for this module.
-
-#if PLATFORM_XBOXONE
-// Disable Win32 functions used in ImGui and not supported on XBox.
-#define IMGUI_DISABLE_WIN32_DEFAULT_CLIPBOARD_FUNCTIONS
-#define IMGUI_DISABLE_WIN32_DEFAULT_IME_FUNCTIONS
-#endif // PLATFORM_XBOXONE
 
 #if PLATFORM_WINDOWS
 #include <Windows/AllowWindowsPlatformTypes.h>
@@ -46,6 +45,7 @@ static FImGuiContextHandle ImGuiContextPtrHandle(ImGuiContextPtr);
 #include "imgui_demo.cpp"
 #include "imgui_draw.cpp"
 #include "imgui_widgets.cpp"
+#include "imgui_tables.cpp"
 
 #if PLATFORM_WINDOWS
 #include <Windows/HideWindowsPlatformTypes.h>
@@ -56,6 +56,14 @@ static FImGuiContextHandle ImGuiContextPtrHandle(ImGuiContextPtr);
 
 namespace ImGuiImplementation
 {
+	void UpdateFontAtlas(ImFontAtlas& Atlas)
+	{
+		const int FrameNumber = static_cast<int>(GFrameNumber & MAX_int32);
+		if (!Atlas.Builder || Atlas.Builder->FrameCount < FrameNumber)
+		{
+			ImFontAtlasUpdateNewFrame(&Atlas, FrameNumber, true);
+		}
+	}
 #if WITH_EDITOR
 	FImGuiContextHandle& GetContextHandle()
 	{

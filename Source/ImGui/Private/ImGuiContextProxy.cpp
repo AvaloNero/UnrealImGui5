@@ -10,6 +10,7 @@
 
 #include <GenericPlatform/GenericPlatformFile.h>
 #include <Misc/Paths.h>
+#include <HAL/PlatformApplicationMisc.h>
 
 
 static constexpr float DEFAULT_CANVAS_WIDTH = 3840.f;
@@ -73,8 +74,9 @@ namespace
 	};
 }
 
-FImGuiContextProxy::FImGuiContextProxy(const FString& InName, int32 InContextIndex, ImFontAtlas* InFontAtlas, float InDPIScale)
-	: Name(InName)
+FImGuiContextProxy::FImGuiContextProxy(const FString& InName, int32 InContextIndex, ImFontAtlas* InFontAtlas, float InDPIScale, FTextureManager& InTextureManager)
+	: TextureManager(InTextureManager)
+	, Name(InName)
 	, ContextIndex(InContextIndex)
 	, IniFilename(TCHAR_TO_ANSI(*GetIniFile(InName)))
 {
@@ -86,19 +88,34 @@ FImGuiContextProxy::FImGuiContextProxy(const FString& InName, int32 InContextInd
 
 	// Start initialization.
 	ImGuiIO& IO = ImGui::GetIO();
+	IO.BackendPlatformName = "UnrealEngine";
+	IO.BackendRendererName = "UnrealEngine_Slate";
+	IO.BackendFlags |= ImGuiBackendFlags_HasMouseCursors | ImGuiBackendFlags_RendererHasTextures;
+	if (sizeof(SlateIndex) >= sizeof(uint32)) IO.BackendFlags |= ImGuiBackendFlags_RendererHasVtxOffset;
+
+	ImGuiPlatformIO& PlatformIO = ImGui::GetPlatformIO();
+	PlatformIO.Platform_GetClipboardTextFn = [](ImGuiContext*) -> const char*
+	{
+		static std::string ClipboardText;
+		FString Text;
+		FPlatformApplicationMisc::ClipboardPaste(Text);
+		ClipboardText = TCHAR_TO_UTF8(*Text);
+		return ClipboardText.c_str();
+	};
+	PlatformIO.Platform_SetClipboardTextFn = [](ImGuiContext*, const char* Text)
+	{
+		FPlatformApplicationMisc::ClipboardCopy(UTF8_TO_TCHAR(Text));
+	};
 
 	// Set session data storage.
 	IO.IniFilename = IniFilename.c_str();
 
 	// Start with the default canvas size.
 	ResetDisplaySize();
-	IO.DisplaySize = { DisplaySize.X, DisplaySize.Y };
+	IO.DisplaySize = { static_cast<float>(DisplaySize.X), static_cast<float>(DisplaySize.Y) };
 
 	// Set the initial DPI scale.
 	SetDPIScale(InDPIScale);
-
-	// Initialize key mapping, so context can correctly interpret input state.
-	ImGuiInterops::SetUnrealKeyMap(IO);
 
 	// Begin frame to complete context initialization (this is to avoid problems with other systems calling to ImGui
 	// during startup).
@@ -112,6 +129,16 @@ FImGuiContextProxy::~FImGuiContextProxy()
 		// It seems that to properly shutdown context we need to set it as the current one (at least in this framework
 		// version), even though we can pass it to the destroy function.
 		SetAsCurrent();
+		if (bIsFrameStarted)
+		{
+			// Refresh the texture list after atlas updates, before releasing the last context's resources.
+			ImGui::EndFrame();
+			bIsFrameStarted = false;
+		}
+		for (ImTextureData* TextureData : ImGui::GetPlatformIO().Textures)
+		{
+			if (TextureData->RefCount <= 1) TextureManager.ReleaseImGuiTexture(*TextureData);
+		}
 
 		// Save context data and destroy.
 		ImGui::DestroyContext(Context);
@@ -131,6 +158,7 @@ void FImGuiContextProxy::SetDPIScale(float Scale)
 
 		ImGuiStyle NewStyle = ImGuiStyle();
 		NewStyle.ScaleAllSizes(Scale);
+		NewStyle.FontScaleDpi = Scale;
 
 		FGuardCurrentContext GuardContext;
 		SetAsCurrent();
@@ -172,7 +200,7 @@ void FImGuiContextProxy::DrawDebug()
 void FImGuiContextProxy::Tick(float DeltaSeconds)
 {
 	// Making sure that we tick only once per frame.
-	if (LastFrameNumber < GFrameNumber)
+	if (LastFrameNumber != GFrameNumber)
 	{
 		LastFrameNumber = GFrameNumber;
 
@@ -206,13 +234,14 @@ void FImGuiContextProxy::BeginFrame(float DeltaTime)
 	if (!bIsFrameStarted)
 	{
 		ImGuiIO& IO = ImGui::GetIO();
-		IO.DeltaTime = DeltaTime;
+		IO.DeltaTime = FMath::Max(DeltaTime, 0.000001f);
 
 		ImGuiInterops::CopyInput(IO, InputState);
 		InputState.ClearUpdateState();
 
-		IO.DisplaySize = { DisplaySize.X, DisplaySize.Y };
+		IO.DisplaySize = { static_cast<float>(DisplaySize.X), static_cast<float>(DisplaySize.Y) };
 
+		ImGuiImplementation::UpdateFontAtlas(*IO.Fonts);
 		ImGui::NewFrame();
 
 		bIsFrameStarted = true;
@@ -238,9 +267,11 @@ void FImGuiContextProxy::EndFrame()
 
 void FImGuiContextProxy::UpdateDrawData(ImDrawData* DrawData)
 {
+	if (DrawData) TextureManager.UpdateImGuiTextures(*DrawData);
+
 	if (DrawData && DrawData->CmdListsCount > 0)
 	{
-		DrawLists.SetNum(DrawData->CmdListsCount, false);
+		DrawLists.SetNum(DrawData->CmdListsCount, EAllowShrinking::No);
 
 		for (int Index = 0; Index < DrawData->CmdListsCount; Index++)
 		{
