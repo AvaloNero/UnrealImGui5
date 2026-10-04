@@ -24,6 +24,8 @@ The integration now submits named keyboard and gamepad events, supports dynamic 
 
 `FImGuiTextureHandle` can still be passed directly to `ImGui::Image()`. ImGui now uses integer texture IDs and `ImTextureRef`; register Unreal textures through `FImGuiModule::RegisterTexture()` rather than casting texture pointers. For other application API changes, see the vendored [Dear ImGui changelog](Source/ThirdParty/ImGuiLibrary/Docs/CHANGELOG.txt).
 
+Input events preserve Slate arrival order, including fast button taps and mixed pointer/text input. Losing focus cancels pending input. Runtime DPI changes preserve custom themes and fractional sizes. Texture IDs are opaque session values: releasing a registration invalidates its old handles, while updating a live registration by name preserves its ID. Keep externally registered Unreal textures referenced by their owner so they survive garbage collection. See the [independent review and fixes](Docs/UE58Review.md).
+
 
 About
 -----
@@ -77,7 +79,7 @@ PublicDependencyModuleNames.Add("ImGui");
 You might also want to use ImGui only in certain builds:
 
 ```C#
-if (Target.Configuration != UnrealTargetConfiguration.Shipping)
+if (Target.bBuildDeveloperTools)
 {
 	PrivateDependencyModuleNames.Add("ImGui");
 }

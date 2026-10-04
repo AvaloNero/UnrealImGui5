@@ -1,7 +1,8 @@
 param(
     [Parameter(Mandatory = $true)][string]$EnginePath,
     [string]$ValidationRoot = (Join-Path $env:TEMP ('UnrealImGui5-UE58-' + [guid]::NewGuid().ToString('N'))),
-    [switch]$SkipGPU
+    [switch]$SkipGPU,
+    [switch]$VerifyGameModules
 )
 
 $ErrorActionPreference = 'Stop'
@@ -27,9 +28,24 @@ New-Item -ItemType Directory -Path $evidencePath -Force | Out-Null
 $projectPath = Join-Path $validationPath 'ImGuiValidation.uproject'
 $buildTool = Join-Path $engineRoot 'Engine\Build\BatchFiles\Build.bat'
 $editor = Join-Path $engineRoot 'Engine\Binaries\Win64\UnrealEditor-Cmd.exe'
+$testSource = Get-Content -LiteralPath (Join-Path $repoRoot 'Source\ImGui\Private\Tests\ImGuiIntegrationTests.cpp') -Raw
+$expectedTests = @([regex]::Matches($testSource, '"(ImGui\.Integration\.[^"]+)"') | ForEach-Object { $_.Groups[1].Value })
+if ($expectedTests.Count -eq 0) { throw 'No ImGui integration tests were found.' }
 
 & $buildTool ImGuiValidationEditor Win64 Development "-Project=$projectPath" -UsePrecompiled -NoHotReloadFromIDE *> (Join-Path $evidencePath 'editor-build.log')
 if ($LASTEXITCODE -ne 0) { throw "Editor build failed. See $evidencePath\editor-build.log" }
+
+if ($VerifyGameModules) {
+    # Module filters compile the non-editor paths without linking a complete engine/game executable.
+    foreach ($configuration in @('Development', 'Shipping')) {
+        $moduleArguments = @('-Module=ImGuiValidation')
+        if ($configuration -eq 'Development') { $moduleArguments = @('-Module=ImGui', '-Module=ImGuiValidation') }
+        $moduleLog = Join-Path $evidencePath ('game-modules-' + $configuration + '.log')
+        & $buildTool ImGuiValidation Win64 $configuration "-Project=$projectPath" @moduleArguments -NoHotReloadFromIDE *> $moduleLog
+        if ($LASTEXITCODE -ne 0) { throw "Game module compilation failed in $configuration. See $moduleLog" }
+        Write-Output "$configuration Game modules compiled (no executable link or packaging)."
+    }
+}
 
 $renderModes = @('NullRHI')
 if (!$SkipGPU) { $renderModes += 'D3D12' }
@@ -41,8 +57,11 @@ foreach ($renderMode in $renderModes) {
     if ($LASTEXITCODE -ne 0) { throw "Unreal exited with an error in $renderMode. See $logPath" }
     # TestExit can return zero even when tests fail; inspect the exported report as well.
     $report = Get-Content -LiteralPath (Join-Path $reportPath 'index.json') -Raw | ConvertFrom-Json
-    if ($report.failed -ne 0 -or $report.notRun -ne 0 -or $report.succeeded -ne 6) { throw "Expected all 6 ImGui tests to pass in $renderMode. See $reportPath" }
-    Write-Output "$renderMode : $($report.succeeded)/6 tests passed."
+    $missingTests = @($expectedTests | Where-Object { $_ -notin $report.tests.fullTestPath })
+    if ($report.failed -ne 0 -or $report.notRun -ne 0 -or $report.succeededWithWarnings -ne 0 -or $report.succeeded -ne $expectedTests.Count -or $missingTests.Count -ne 0) {
+        throw "Expected all $($expectedTests.Count) ImGui tests to pass without warnings in $renderMode. See $reportPath"
+    }
+    Write-Output "$renderMode : $($report.succeeded)/$($expectedTests.Count) tests passed."
 }
 
 if (!$SkipGPU) {

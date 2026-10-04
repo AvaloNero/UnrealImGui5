@@ -10,6 +10,13 @@
 
 namespace
 {
+	uint32 AllocateTextureGeneration()
+	{
+		static uint32 NextGeneration = 1;
+		const uint32 Generation = NextGeneration++;
+		checkf(Generation != 0, TEXT("ImGui texture generation counter exhausted."));
+		return Generation;
+	}
 	// The render thread owns this snapshot; ImGui may resize or free its pixels in the next frame.
 	uint8* CopyImGuiPixels(const ImTextureData& Data, int32 X, int32 Y, int32 Width, int32 Height)
 	{
@@ -51,14 +58,14 @@ void FTextureManager::UpdateImGuiTexture(ImTextureData& Data)
 		const FName Name(*FString::Printf(TEXT("ImGui_Atlas_%p"), &Data));
 		uint8* Pixels = CopyImGuiPixels(Data, 0, 0, Data.Width, Data.Height);
 		const TextureIndex Index = CreateTexture(Name, Data.Width, Data.Height, 4, Pixels, [](uint8* Buffer) { delete[] Buffer; });
-		Data.SetTexID(ImGuiInterops::ToImTextureID(Index));
+		Data.SetTexID(GetTextureId(Index));
 		Data.BackendUserData = TextureResources[Index].GetTexture();
 		Data.SetStatus(ImTextureStatus_OK);
 	}
 	else if (Data.Status == ImTextureStatus_WantUpdates)
 	{
 		const TextureIndex Index = ImGuiInterops::ToTextureIndex(Data.GetTexID());
-		check(IsValidTexture(Index));
+		check(IsValidTextureId(Data.GetTexID()));
 		const ImTextureRect& Rect = Data.UpdateRect;
 		if (Rect.w > 0 && Rect.h > 0)
 		{
@@ -79,7 +86,7 @@ void FTextureManager::UpdateImGuiTexture(ImTextureData& Data)
 void FTextureManager::ReleaseImGuiTexture(ImTextureData& Data)
 {
 	const TextureIndex Index = ImGuiInterops::ToTextureIndex(Data.GetTexID());
-	if (IsValidTexture(Index))
+	if (IsRegisteredTextureId(Data.GetTexID()))
 	{
 		ReleaseTextureResources(Index);
 	}
@@ -88,6 +95,22 @@ void FTextureManager::ReleaseImGuiTexture(ImTextureData& Data)
 	Data.SetStatus(ImTextureStatus_Destroyed);
 }
 
+
+ImTextureID FTextureManager::GetTextureId(TextureIndex Index) const
+{
+	return IsValidTexture(Index) ? ImGuiInterops::ToImTextureID(Index, TextureResources[Index].GetGeneration()) : ImTextureID_Invalid;
+}
+
+bool FTextureManager::IsRegisteredTextureId(ImTextureID Id) const
+{
+	const TextureIndex Index = ImGuiInterops::ToTextureIndex(Id);
+	return IsInRange(Index) && TextureResources[Index].GetName() != NAME_None && TextureResources[Index].GetGeneration() == ImGuiInterops::ToTextureGeneration(Id);
+}
+
+bool FTextureManager::IsValidTextureId(ImTextureID Id) const
+{
+	return IsRegisteredTextureId(Id) && IsValidTexture(ImGuiInterops::ToTextureIndex(Id));
+}
 
 void FTextureManager::InitializeErrorTexture(const FColor& Color)
 {
@@ -172,6 +195,8 @@ TextureIndex FTextureManager::AddTextureEntry(const FName& Name, UTexture2D* Tex
 {
 	// Try to find an entry with that name.
 	TextureIndex Index = FindTextureIndex(Name);
+	// Updating an existing named registration preserves its identity; release/reuse creates a new one.
+	const uint32 Generation = Index != INDEX_NONE ? TextureResources[Index].GetGeneration() : AllocateTextureGeneration();
 
 	// If this is a new name, try to find an entry to reuse.
 	if (Index == INDEX_NONE)
@@ -182,24 +207,25 @@ TextureIndex FTextureManager::AddTextureEntry(const FName& Name, UTexture2D* Tex
 	// Either update/reuse an entry or add a new one.
 	if (Index != INDEX_NONE)
 	{
-		TextureResources[Index] = { Name, Texture, bAddToRoot };
+		TextureResources[Index] = { Name, Texture, bAddToRoot, Generation };
 		return Index;
 	}
 	else
 	{
-		return TextureResources.Emplace(Name, Texture, bAddToRoot);
+		return TextureResources.Emplace(Name, Texture, bAddToRoot, Generation);
 	}
 }
 
-FTextureManager::FTextureEntry::FTextureEntry(const FName& InName, UTexture2D* InTexture, bool bAddToRoot)
+FTextureManager::FTextureEntry::FTextureEntry(const FName& InName, UTexture2D* InTexture, bool bAddToRoot, uint32 InGeneration)
 	: Name(InName)
+	, Generation(InGeneration)
+	, bOwnsTexture(bAddToRoot)
+	, Texture(InTexture)
 {
 	checkf(InTexture, TEXT("Null texture."));
 
 	if (bAddToRoot)
 	{
-		// Get pointer only for textures that we added to root, so we can later release them.
-		Texture = InTexture;
 		// Add texture to the root to prevent garbage collection.
 		InTexture->AddToRoot();
 	}
@@ -221,6 +247,8 @@ FTextureManager::FTextureEntry& FTextureManager::FTextureEntry::operator=(FTextu
 
 	// Move data and ownership to this instance.
 	Name = MoveTemp(Other.Name);
+	Generation = Other.Generation;
+	bOwnsTexture = Other.bOwnsTexture;
 	Texture = MoveTemp(Other.Texture);
 	Brush = MoveTemp(Other.Brush);
 	CachedResourceHandle = MoveTemp(Other.CachedResourceHandle);
@@ -246,14 +274,14 @@ void FTextureManager::FTextureEntry::Reset(bool bReleaseResources)
 	if (bReleaseResources)
 	{
 		// Release brush.
-		if (Brush.HasUObject() && FSlateApplication::IsInitialized())
+		if (Texture.IsValid() && Brush.HasUObject() && FSlateApplication::IsInitialized())
 		{
 			FSlateApplication::Get().GetRenderer()->ReleaseDynamicResource(Brush);
 		}
 
 		// Remove texture from root to allow for garbage collection (it might be invalid, if we never set it
 		// or this is an application shutdown).
-		if (Texture.IsValid())
+		if (bOwnsTexture && Texture.IsValid())
 		{
 			Texture->RemoveFromRoot();
 		}
@@ -261,6 +289,8 @@ void FTextureManager::FTextureEntry::Reset(bool bReleaseResources)
 
 	// We use empty name to mark unused entries.
 	Name = NAME_None;
+	Generation = 0;
+	bOwnsTexture = false;
 
 	// Clean fields to make sure that we don't reference released or moved resources.
 	Texture.Reset();

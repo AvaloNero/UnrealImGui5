@@ -143,6 +143,7 @@ void FImGuiModuleManager::Tick(float DeltaSeconds)
 	if (IsInGameThread())
 	{
 		LoadTextures();
+		PreImGuiUpdateEvent.Broadcast();
 		// Update context manager to advance all ImGui contexts to the next frame.
 		ContextManager.Tick(DeltaSeconds);
 

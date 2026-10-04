@@ -100,15 +100,17 @@ namespace ImGuiInterops
 	}
 
 	// Convert from ImGui Texture Id to Texture Index that we use for texture resources.
-	FORCEINLINE TextureIndex ToTextureIndex(ImTextureID Index)
+	FORCEINLINE TextureIndex ToTextureIndex(ImTextureID Id)
 	{
-		return Index == ImTextureID_Invalid ? INDEX_NONE : static_cast<TextureIndex>(Index - 1);
+		const uint32 Slot = static_cast<uint32>(Id);
+		return Slot == 0 || Slot > static_cast<uint32>(MAX_int32) ? INDEX_NONE : static_cast<TextureIndex>(Slot - 1);
 	}
 
 	// Convert from Texture Index to ImGui Texture Id that we pass to ImGui.
-	FORCEINLINE ImTextureID ToImTextureID(TextureIndex Index)
+	FORCEINLINE ImTextureID ToImTextureID(TextureIndex Index, uint32 Generation = 0)
 	{
 		// Zero is reserved by Dear ImGui for an invalid texture.
-		return Index == INDEX_NONE ? ImTextureID_Invalid : static_cast<ImTextureID>(Index) + 1;
+		return Index == INDEX_NONE ? ImTextureID_Invalid : (static_cast<ImTextureID>(Generation) << 32) | (static_cast<ImTextureID>(Index) + 1);
 	}
+	FORCEINLINE uint32 ToTextureGeneration(ImTextureID Id) { return static_cast<uint32>(Id >> 32); }
 }

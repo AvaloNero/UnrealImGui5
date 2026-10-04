@@ -56,6 +56,42 @@ static FImGuiContextHandle ImGuiContextPtrHandle(ImGuiContextPtr);
 
 namespace ImGuiImplementation
 {
+	void ResetInput(ImGuiIO& IO, bool bKeyboard, bool bMouse, bool bGamepad)
+	{
+		if (!bKeyboard && !bMouse && !bGamepad) return;
+		ImGuiContext& InputContext = *IO.Ctx;
+		int WriteIndex = 0;
+		for (const ImGuiInputEvent& Event : InputContext.InputEventsQueue)
+		{
+			bool bDiscard = bKeyboard && Event.Type == ImGuiInputEventType_Text;
+			if (Event.Type == ImGuiInputEventType_Key)
+			{
+				bDiscard |= ImGui::IsGamepadKey(Event.Key.Key) ? bGamepad : bKeyboard;
+			}
+			bDiscard |= bMouse && (Event.Type == ImGuiInputEventType_MousePos || Event.Type == ImGuiInputEventType_MouseButton || Event.Type == ImGuiInputEventType_MouseWheel);
+			if (!bDiscard) InputContext.InputEventsQueue[WriteIndex++] = Event;
+		}
+		InputContext.InputEventsQueue.resize(WriteIndex);
+		for (int Key = ImGuiKey_NamedKey_BEGIN; Key < ImGuiKey_NamedKey_END; ++Key)
+		{
+			const ImGuiKey NamedKey = static_cast<ImGuiKey>(Key);
+			if (ImGui::IsMouseKey(NamedKey)) continue;
+			if (!(ImGui::IsGamepadKey(NamedKey) ? bGamepad : bKeyboard)) continue;
+			ImGuiKeyData& Data = IO.KeysData[Key - ImGuiKey_NamedKey_BEGIN];
+			Data.Down = false;
+			Data.AnalogValue = 0.f;
+			Data.DownDuration = Data.DownDurationPrev = -1.f;
+		}
+		if (bKeyboard)
+		{
+			IO.KeyCtrl = IO.KeyShift = IO.KeyAlt = IO.KeySuper = false;
+			IO.KeyMods = ImGuiMod_None;
+			IO.InputQueueCharacters.resize(0);
+			IO.InputQueueSurrogate = 0;
+		}
+		if (bMouse) IO.ClearInputMouse();
+	}
+
 	void UpdateFontAtlas(ImFontAtlas& Atlas)
 	{
 		const int FrameNumber = static_cast<int>(GFrameNumber & MAX_int32);

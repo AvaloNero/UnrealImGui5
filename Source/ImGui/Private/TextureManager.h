@@ -5,6 +5,7 @@
 #include <Styling/SlateBrush.h>
 #include <Textures/SlateShaderResource.h>
 #include <UObject/WeakObjectPtr.h>
+#include <imgui.h>
 
 
 class UTexture2D;
@@ -54,14 +55,15 @@ public:
 		return IsInRange(Index) ? TextureResources[Index].GetName() : NAME_None;
 	}
 
-	// Get the Slate Resource Handle to a texture at given index. If index is out of range or resources are not valid
-	// it returns a handle to the error texture.
-	// @param Index - Index of a texture
-	// @returns The Slate Resource Handle for a texture at given index or to error texture, if no valid resources were
-	// found at given index
-	const FSlateResourceHandle& GetTextureHandle(TextureIndex Index) const
+	// Resolve an index to an opaque ID containing the registration's generation.
+	ImTextureID GetTextureId(TextureIndex Index) const;
+	// Registration can outlive its externally owned UObject, so release uses this identity-only check.
+	bool IsRegisteredTextureId(ImTextureID Id) const;
+	bool IsValidTextureId(ImTextureID Id) const;
+	// Invalid, released or collected IDs render with the error texture.
+	const FSlateResourceHandle& GetTextureHandle(ImTextureID Id) const
 	{
-		return IsValidTexture(Index) ? TextureResources[Index].GetResourceHandle() : ErrorTexture.GetResourceHandle();
+		return IsValidTextureId(Id) ? TextureResources[static_cast<uint32>(Id) - 1].GetResourceHandle() : ErrorTexture.GetResourceHandle();
 	}
 
 	// Create a texture from raw data.
@@ -125,14 +127,14 @@ private:
 	// Check whether index is in range and whether texture resources are valid (using NAME_None sentinel).
 	FORCEINLINE bool IsValidTexture(TextureIndex Index) const
 	{
-		return IsInRange(Index) && TextureResources[Index].GetName() != NAME_None;
+		return IsInRange(Index) && TextureResources[Index].GetName() != NAME_None && TextureResources[Index].GetTexture() != nullptr;
 	}
 
 	// Entry for texture resources. Only supports explicit construction.
 	struct FTextureEntry
 	{
 		FTextureEntry() = default;
-		FTextureEntry(const FName& InName, UTexture2D* InTexture, bool bAddToRoot);
+		FTextureEntry(const FName& InName, UTexture2D* InTexture, bool bAddToRoot, uint32 InGeneration = 0);
 		~FTextureEntry();
 
 		// Copying is not supported.
@@ -147,12 +149,15 @@ private:
 		const FName& GetName() const { return Name; }
 		const FSlateResourceHandle& GetResourceHandle() const;
 		UTexture2D* GetTexture() const { return Texture.Get(); }
+		uint32 GetGeneration() const { return Generation; }
 
 	private:
 
 		void Reset(bool bReleaseResources);
 
 		FName Name = NAME_None;
+		uint32 Generation = 0;
+		bool bOwnsTexture = false;
 		mutable FSlateResourceHandle CachedResourceHandle;
 		TWeakObjectPtr<UTexture2D> Texture;
 		FSlateBrush Brush;

@@ -9,8 +9,11 @@
 #include "VersionCompatibility.h"
 
 #include <GenericPlatform/GenericPlatformFile.h>
+#include <Math/UnrealMathUtility.h>
 #include <Misc/Paths.h>
 #include <HAL/PlatformApplicationMisc.h>
+
+#include <cfloat>
 
 
 static constexpr float DEFAULT_CANVAS_WIDTH = 3840.f;
@@ -72,6 +75,117 @@ namespace
 		ImGuiContext* OldContext = nullptr;
 		bool bRestore = true;
 	};
+
+	enum class EStyleSizeSentinel
+	{
+		None,
+		NonPositiveOrMax,
+		Negative
+	};
+
+	struct FScalarStyleSize
+	{
+		float ImGuiStyle::* Member;
+		EStyleSizeSentinel Sentinel = EStyleSizeSentinel::None;
+	};
+
+	// Keep these fields in sync with ImGuiStyle::ScaleAllSizes(). Scale from an unrounded
+	// baseline instead of repeatedly truncating sizes, so DPI round trips preserve the theme.
+	constexpr FScalarStyleSize ScalarStyleSizes[] =
+	{
+		{ &ImGuiStyle::_MainScale },
+		{ &ImGuiStyle::WindowRounding },
+		{ &ImGuiStyle::WindowBorderSize },
+		{ &ImGuiStyle::WindowBorderHoverPadding },
+		{ &ImGuiStyle::ChildRounding },
+		{ &ImGuiStyle::ChildBorderSize },
+		{ &ImGuiStyle::PopupRounding },
+		{ &ImGuiStyle::PopupBorderSize },
+		{ &ImGuiStyle::FrameBorderSize },
+		{ &ImGuiStyle::FrameRounding },
+		{ &ImGuiStyle::IndentSpacing },
+		{ &ImGuiStyle::ColumnsMinSpacing },
+		{ &ImGuiStyle::ScrollbarSize },
+		{ &ImGuiStyle::ScrollbarRounding },
+		{ &ImGuiStyle::ScrollbarPadding },
+		{ &ImGuiStyle::GrabMinSize },
+		{ &ImGuiStyle::GrabRounding },
+		{ &ImGuiStyle::LogSliderDeadzone },
+		{ &ImGuiStyle::ImageRounding },
+		{ &ImGuiStyle::ImageBorderSize },
+		{ &ImGuiStyle::TabRounding },
+		{ &ImGuiStyle::TabBorderSize },
+		{ &ImGuiStyle::TabMinWidthBase },
+		{ &ImGuiStyle::TabMinWidthShrink },
+		{ &ImGuiStyle::TabCloseButtonMinWidthSelected, EStyleSizeSentinel::NonPositiveOrMax },
+		{ &ImGuiStyle::TabCloseButtonMinWidthUnselected, EStyleSizeSentinel::NonPositiveOrMax },
+		{ &ImGuiStyle::TabBarBorderSize },
+		{ &ImGuiStyle::TabBarOverlineSize },
+		{ &ImGuiStyle::TreeLinesSize },
+		{ &ImGuiStyle::TreeLinesRounding },
+		{ &ImGuiStyle::MenuItemRounding },
+		{ &ImGuiStyle::SelectableRounding },
+		{ &ImGuiStyle::DragDropTargetRounding, EStyleSizeSentinel::Negative },
+		{ &ImGuiStyle::DragDropTargetBorderSize },
+		{ &ImGuiStyle::DragDropTargetPadding },
+		{ &ImGuiStyle::ColorMarkerSize },
+		{ &ImGuiStyle::InputTextCursorSize },
+		{ &ImGuiStyle::SeparatorSize },
+		{ &ImGuiStyle::SeparatorTextBorderSize },
+		{ &ImGuiStyle::MouseCursorScale }
+	};
+
+	constexpr ImVec2 ImGuiStyle::* VectorStyleSizes[] =
+	{
+		&ImGuiStyle::WindowPadding,
+		&ImGuiStyle::WindowMinSize,
+		&ImGuiStyle::FramePadding,
+		&ImGuiStyle::ItemSpacing,
+		&ImGuiStyle::ItemInnerSpacing,
+		&ImGuiStyle::CellPadding,
+		&ImGuiStyle::TouchExtraPadding,
+		&ImGuiStyle::SeparatorTextPadding,
+		&ImGuiStyle::DisplayWindowPadding,
+		&ImGuiStyle::DisplaySafeAreaPadding
+	};
+
+	bool IsStyleSizeSentinel(float Value, EStyleSizeSentinel Sentinel)
+	{
+		return (Sentinel == EStyleSizeSentinel::NonPositiveOrMax && (Value <= 0.f || Value == FLT_MAX))
+			|| (Sentinel == EStyleSizeSentinel::Negative && Value < 0.f);
+	}
+
+	float ScaleStyleSize(float Value, float PreviousValue, float& UnscaledValue, float OldScale, float NewScale,
+		EStyleSizeSentinel Sentinel = EStyleSizeSentinel::None)
+	{
+		if (Value != PreviousValue)
+		{
+			// A theme edit is expressed in the current DPI's units. Update only this component's
+			// baseline; unchanged components retain their original precision.
+			UnscaledValue = IsStyleSizeSentinel(Value, Sentinel) ? Value : Value / OldScale;
+		}
+
+		return IsStyleSizeSentinel(UnscaledValue, Sentinel) ? UnscaledValue : UnscaledValue * NewScale;
+	}
+
+	void ScaleStyleSizes(ImGuiStyle& Style, ImGuiStyle& UnscaledStyle, const ImGuiStyle& PreviousStyle,
+		float OldScale, float NewScale)
+	{
+		for (const FScalarStyleSize& Size : ScalarStyleSizes)
+		{
+			Style.*Size.Member = ScaleStyleSize(Style.*Size.Member, PreviousStyle.*Size.Member,
+				UnscaledStyle.*Size.Member, OldScale, NewScale, Size.Sentinel);
+		}
+
+		for (ImVec2 ImGuiStyle::* Member : VectorStyleSizes)
+		{
+			ImVec2& Value = Style.*Member;
+			const ImVec2& PreviousValue = PreviousStyle.*Member;
+			ImVec2& UnscaledValue = UnscaledStyle.*Member;
+			Value.x = ScaleStyleSize(Value.x, PreviousValue.x, UnscaledValue.x, OldScale, NewScale);
+			Value.y = ScaleStyleSize(Value.y, PreviousValue.y, UnscaledValue.y, OldScale, NewScale);
+		}
+	}
 }
 
 FImGuiContextProxy::FImGuiContextProxy(const FString& InName, int32 InContextIndex, ImFontAtlas* InFontAtlas, float InDPIScale, FTextureManager& InTextureManager)
@@ -94,6 +208,8 @@ FImGuiContextProxy::FImGuiContextProxy(const FString& InName, int32 InContextInd
 	if (sizeof(SlateIndex) >= sizeof(uint32)) IO.BackendFlags |= ImGuiBackendFlags_RendererHasVtxOffset;
 
 	ImGuiPlatformIO& PlatformIO = ImGui::GetPlatformIO();
+	// Slate owns the graphics state; ImGui callbacks cannot change its renderer state.
+	PlatformIO.DrawCallback_ResetRenderState = [](const ImDrawList*, const ImDrawCmd*) {};
 	PlatformIO.Platform_GetClipboardTextFn = [](ImGuiContext*) -> const char*
 	{
 		static std::string ClipboardText;
@@ -152,18 +268,30 @@ void FImGuiContextProxy::ResetDisplaySize()
 
 void FImGuiContextProxy::SetDPIScale(float Scale)
 {
-	if (DPIScale != Scale)
+	if (!FMath::IsFinite(Scale) || Scale <= 0.f)
 	{
-		DPIScale = Scale;
-
-		ImGuiStyle NewStyle = ImGuiStyle();
-		NewStyle.ScaleAllSizes(Scale);
-		NewStyle.FontScaleDpi = Scale;
-
-		FGuardCurrentContext GuardContext;
-		SetAsCurrent();
-		ImGui::GetStyle() = MoveTemp(NewStyle);
+		Scale = 1.f;
 	}
+
+	if (DPIScale == Scale && bHasDPIScaleStyle)
+	{
+		return;
+	}
+
+	FGuardCurrentContext GuardContext;
+	SetAsCurrent();
+	ImGuiStyle& Style = ImGui::GetStyle();
+	if (!bHasDPIScaleStyle)
+	{
+		UnscaledStyle = Style;
+		LastDPIScaleStyle = Style;
+		bHasDPIScaleStyle = true;
+	}
+
+	ScaleStyleSizes(Style, UnscaledStyle, LastDPIScaleStyle, DPIScale, Scale);
+	Style.FontScaleDpi = Scale;
+	LastDPIScaleStyle = Style;
+	DPIScale = Scale;
 }
 
 void FImGuiContextProxy::DrawEarlyDebug()

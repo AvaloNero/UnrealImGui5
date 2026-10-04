@@ -15,7 +15,7 @@ struct FImGuiDrawCommand
 {
 	uint32 NumElements;
 	FSlateRect ClippingRect;
-	TextureIndex TextureId;
+	ImTextureID TextureId;
 	uint32 IndexOffset;
 	uint32 VertexOffset;
 };
@@ -36,7 +36,7 @@ public:
 	{
 		const ImDrawCmd& ImGuiCommand = ImGuiCommandBuffer[CommandNb];
 		return { ImGuiCommand.ElemCount, TransformRect(Transform, ImGuiInterops::ToSlateRect(ImGuiCommand.ClipRect)),
-			ImGuiInterops::ToTextureIndex(ImGuiCommand.GetTexID()), ImGuiCommand.IdxOffset, ImGuiCommand.VtxOffset };
+			ImGuiCommand.GetTexID(), ImGuiCommand.IdxOffset, ImGuiCommand.VtxOffset };
 	}
 
 #if ENGINE_COMPATIBILITY_LEGACY_CLIPPING_API

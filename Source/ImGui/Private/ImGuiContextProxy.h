@@ -56,7 +56,7 @@ public:
 	// Get the DPI scale set for this context.
 	float GetDPIScale() const { return DPIScale; }
 
-	// Set the DPI scale for this context.
+	// Set the DPI scale while preserving the current theme. Invalid scales fall back to 1.
 	void SetDPIScale(float Scale);
 
 	// Whether this context has an active item (read once per frame during context update).
@@ -99,6 +99,10 @@ private:
 
 	FVector2D DisplaySize = FVector2D::ZeroVector;
 	float DPIScale = 1.f;
+	// Cache unrounded dimensions and the last applied values to recognize subsequent theme edits.
+	ImGuiStyle UnscaledStyle;
+	ImGuiStyle LastDPIScaleStyle;
+	bool bHasDPIScaleStyle = false;
 
 	EMouseCursor::Type MouseCursor = EMouseCursor::None;
 	bool bHasActiveItem = false;

@@ -7,6 +7,7 @@
 #include "HAL/PlatformFileManager.h"
 #include "Misc/CommandLine.h"
 #include "Misc/Paths.h"
+#if WITH_IMGUI
 #include "ImGuiModule.h"
 #include "ImGuiDelegates.h"
 #include "UnrealClient.h"
@@ -111,3 +112,6 @@ private:
 };
 
 IMPLEMENT_PRIMARY_GAME_MODULE(FImGuiValidationModule, ImGuiValidation, "ImGuiValidation");
+#else
+IMPLEMENT_PRIMARY_GAME_MODULE(FDefaultGameModuleImpl, ImGuiValidation, "ImGuiValidation");
+#endif

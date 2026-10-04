@@ -2,6 +2,7 @@
 
 #include "ImGuiInteroperability.h"
 #include "ImGuiInputState.h"
+#include "ImGuiImplementation.h"
 
 namespace ImGuiInterops
 {
@@ -200,50 +201,53 @@ namespace ImGuiInterops
 
 	void CopyInput(ImGuiIO& IO, const FImGuiInputState& InputState)
 	{
-		for (const auto& Event : InputState.GetKeyEvents())
-		{
-			IO.AddKeyEvent(Event.Key, Event.bIsDown);
-		}
-		for (const auto& Event : InputState.GetMouseButtonEvents())
-		{
-			if (!InputState.IsTouchActive() || Event.Button != 0)
-			{
-				IO.AddMouseButtonEvent(Event.Button, Event.bIsDown);
-			}
-		}
-		for (const TCHAR Char : InputState.GetCharacters())
-		{
-			if constexpr (sizeof(TCHAR) == 2)
-			{
-				IO.AddInputCharacterUTF16(static_cast<ImWchar16>(Char));
-			}
-			else
-			{
-				IO.AddInputCharacter(static_cast<unsigned int>(Char));
-			}
-		}
-
+		ImGuiImplementation::ResetInput(IO, InputState.ShouldResetKeyboard(), InputState.ShouldResetMouse(), InputState.ShouldResetGamepad());
 		const bool bGamepadEnabled = InputState.IsGamepadNavigationEnabled() && InputState.HasGamepad();
-		const auto& NavigationInputs = InputState.GetNavigationInputs();
-		for (int Index = 0; Index < IM_ARRAYSIZE(NavigationInputs); ++Index)
-		{
-			const float Value = bGamepadEnabled ? NavigationInputs[Index] : 0.f;
-			IO.AddKeyAnalogEvent(static_cast<ImGuiKey>(ImGuiKey_GamepadStart + Index), Value > 0.1f, Value);
-		}
 		SetFlag(IO.ConfigFlags, ImGuiConfigFlags_NavEnableKeyboard, InputState.IsKeyboardNavigationEnabled());
 		SetFlag(IO.ConfigFlags, ImGuiConfigFlags_NavEnableGamepad, InputState.IsGamepadNavigationEnabled());
 		SetFlag(IO.BackendFlags, ImGuiBackendFlags_HasGamepad, InputState.HasGamepad());
 		IO.MouseDrawCursor = InputState.HasMousePointer();
 
-		const FVector2D& Position = InputState.IsTouchActive() ? InputState.GetTouchPosition() : InputState.GetMousePosition();
-		IO.AddMousePosEvent(static_cast<float>(Position.X), static_cast<float>(Position.Y));
-		if (InputState.IsTouchActive())
+		// Preserve the order supplied by Slate, including mixed text/key and move/click sequences.
+		for (const auto& Event : InputState.GetEvents())
 		{
-			IO.AddMouseButtonEvent(0, InputState.IsTouchDown());
+			switch (Event.Type)
+			{
+			case FImGuiInputState::EEventType::Key:
+				IO.AddKeyEvent(Event.Key, Event.bIsDown);
+				break;
+			case FImGuiInputState::EEventType::Gamepad:
+				if (bGamepadEnabled) IO.AddKeyAnalogEvent(Event.Key, Event.bIsDown, Event.X);
+				break;
+			case FImGuiInputState::EEventType::Character:
+				if constexpr (sizeof(TCHAR) == 2) IO.AddInputCharacterUTF16(static_cast<ImWchar16>(Event.Character));
+				else IO.AddInputCharacter(Event.Character);
+				break;
+			case FImGuiInputState::EEventType::MousePosition:
+				if (InputState.IsTouchActive() && Event.MouseSource == ImGuiMouseSource_Mouse) break;
+				IO.AddMouseSourceEvent(Event.MouseSource);
+				IO.AddMousePosEvent(Event.X, Event.Y);
+				break;
+			case FImGuiInputState::EEventType::MouseButton:
+				if (InputState.IsTouchActive() && Event.MouseSource == ImGuiMouseSource_Mouse && Event.Button == 0) break;
+				IO.AddMouseSourceEvent(Event.MouseSource);
+				IO.AddMouseButtonEvent(Event.Button, Event.bIsDown);
+				break;
+			case FImGuiInputState::EEventType::MouseWheel:
+				if (!InputState.IsTouchActive()) IO.AddMouseWheelEvent(Event.X, Event.Y);
+				break;
+			case FImGuiInputState::EEventType::Focus:
+				IO.AddFocusEvent(Event.bIsDown);
+				break;
+			}
 		}
-		else if (InputState.GetMouseWheelDelta() != 0.f)
+		if (!InputState.IsTouchActive())
 		{
-			IO.AddMouseWheelEvent(0.f, InputState.GetMouseWheelDelta());
+			// Restore the physical pointer after touch ends, including frames without mouse motion.
+			// This follows queued events so it cannot move a click to a later position.
+			IO.AddMouseSourceEvent(ImGuiMouseSource_Mouse);
+			const FVector2D& Position = InputState.GetMousePosition();
+			IO.AddMousePosEvent(static_cast<float>(Position.X), static_cast<float>(Position.Y));
 		}
 	}
 }
